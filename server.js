@@ -1,7 +1,7 @@
 // server.js (Punto de entrada)
 const { app, initiateDbConnection } = require('./app'); // Importa desde app.js
 
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 8000;
 let serverInstance;
 
 console.log('[SERVER] Iniciando aplicación...');
