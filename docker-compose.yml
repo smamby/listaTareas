@@ -4,11 +4,11 @@ services:
     ports: 
       - "8000:8000"
     environment:
-      - DB_HOST="mysql_db"
-      - DB_USER="todouser"
+      - DB_HOST=mysql_db
+      - DB_USER=todouser
       - DB_PASSWORD=${DB_PASSWORD}
-      - DB_NAME="lista_tareas_db"
-      - NODE_ENV="development"
+      - DB_NAME=lista_tareas_db
+      - NODE_ENV=development
     depends_on:
       mysql_db:
         condition: service_healthy
