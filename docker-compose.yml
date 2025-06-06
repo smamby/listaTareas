@@ -59,9 +59,9 @@ services:
     command: ["npm", "run", "test:integration"]
     restart: "no"
 
-  volumes:
-    mysql_data:
+volumes:
+  mysql_data:
 
-  networks:
-    app_network:
-      driver: bridge
+networks:
+  app_network:
+    driver: bridge
