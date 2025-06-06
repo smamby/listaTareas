@@ -24,6 +24,11 @@ h1 {
     text-align: center;
     margin-bottom: 20px;
 }
+h3 {
+    color: #555;
+    text-align: center;
+    margin-bottom: 20px;
+}
 
 .entrada-tarea {
     display: flex;
