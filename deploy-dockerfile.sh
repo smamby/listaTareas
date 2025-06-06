@@ -1,5 +1,14 @@
 #!/bin/bash
 
+echo "clonando repositorio"
+
+git clone https://github.com/smamby/listaTareas.git
+
+if [ $? -ne 0 ]; then
+    echo "Error al clonar el repositorio"
+    exit 1
+fi
+
 echo "Construyendo imagen de docker para el backend"
 
 docker build -t lista-tareas:latest .
