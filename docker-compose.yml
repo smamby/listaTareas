@@ -14,6 +14,12 @@ services:
         condition: service_healthy
     networks:
       - app_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/tareas"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     
   mysql_db:
     image: mysql:8.0
@@ -32,9 +38,27 @@ services:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "$${MYSQL_USER}", "-p$${MYSQL_PASSWORD}"]
       interval: 10s
       timeout: 20s
-      retries: 3
+      retries: 10
       start_period: 30s
-  
+
+tests:
+  build: .
+  environment:
+    - DB_HOST=mysql_db
+    - DB_USER=todouser
+    - DB_PASSWORD=${DB_PASSWORD}
+    - DB_NAME=lista_tareas_db
+    - NODE_ENV=test
+  depends_on:
+    mysql_db:
+      condition: service_healthy
+    app:
+      condition: service_healthy
+  networks:
+    - app_network
+  command: ["npm", "run", "test:integration"]
+  restart: "no"
+
 volumes:
   mysql_data:
 
