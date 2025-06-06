@@ -41,27 +41,27 @@ services:
       retries: 10
       start_period: 30s
 
-tests:
-  build: .
-  environment:
-    - DB_HOST=mysql_db
-    - DB_USER=todouser
-    - DB_PASSWORD=${DB_PASSWORD}
-    - DB_NAME=lista_tareas_db
-    - NODE_ENV=test
-  depends_on:
-    mysql_db:
-      condition: service_healthy
-    app:
-      condition: service_healthy
+  tests:
+    build: .
+    environment:
+      - DB_HOST=mysql_db
+      - DB_USER=todouser
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=lista_tareas_db
+      - NODE_ENV=test
+    depends_on:
+      mysql_db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    networks:
+      - app_network
+    command: ["npm", "run", "test:integration"]
+    restart: "no"
+
+  volumes:
+    mysql_data:
+
   networks:
-    - app_network
-  command: ["npm", "run", "test:integration"]
-  restart: "no"
-
-volumes:
-  mysql_data:
-
-networks:
-  app_network:
-    driver: bridge
+    app_network:
+      driver: bridge
