@@ -1,3 +1,5 @@
 # listaTareas
 
-[📦 Descargar](https://raw.githubusercontent.com/smamby/listaTareas/main/deploy-dockerfile.sh?download=)
+##Descarga solo este archivo para un despliegue automatico
+
+deploy-dockerfile.sh
