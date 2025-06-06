@@ -12,9 +12,9 @@ app.use(express.static('public'));
 
 // Configuración de la conexión a MySQL usando variables de entorno
 const dbConfig = {
-    host: process.env.DB_HOST || 'mysql_db',
+    host: process.env.DB_HOST ||  'localhost', //'mysql_db',
     user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
+    password: process.env.DB_PASSWORD || 'root',
     database: process.env.DB_NAME || 'lista_tareas_db',
     port: process.env.DB_PORT ? parseInt(process.env.DB_PORT) : 3306, // Convertir a número, por defecto 3306
     waitForConnections: true, // El pool esperará si todas las conexiones están en uso
