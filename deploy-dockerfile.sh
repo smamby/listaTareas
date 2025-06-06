@@ -21,4 +21,4 @@ fi
 
 echo "Contenedor de Docker para el backend ejecutándose correctamente"
 
-open http://localhost:3000
+start http://localhost:3000
