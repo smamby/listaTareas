@@ -1,3 +1,3 @@
 # listaTareas
 
-[📥 Descargar script de despliegue](https://github.com/smamby/listaTareas/raw/main/deploy-dockerfile.sh?raw=true)
+[📦 Descargar](https://raw.githubusercontent.com/smamby/listaTareas/main/deploy-dockerfile.sh?download=)
