@@ -1,121 +1,19 @@
 // app.js
 const express = require('express');
-const mysql = require('mysql2'); // Mantén mysql2, ya que es el que soporta createPool
 const cors = require('cors');
+// Importa las funciones de nuestro nuevo módulo de base de datos
+const { initializeDbPool, getDbPool, executeQuery } = require('./database'); 
 
 const app = express();
+const PORT = process.env.APP_PORT || 8000;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static('public'));
+app.use(express.static('public')); // Si tienes archivos estáticos en `public`
 
-// Configuración de la conexión a MySQL usando variables de entorno
-const dbConfig = {
-    host: process.env.DB_HOST ||  'localhost', //'mysql_db',
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || 'root',
-    database: process.env.DB_NAME || 'lista_tareas_db',
-    port: process.env.DB_PORT ? parseInt(process.env.DB_PORT) : 3306, // Convertir a número, por defecto 3306
-    waitForConnections: true, // El pool esperará si todas las conexiones están en uso
-    connectionLimit: 10,      // Número máximo de conexiones simultáneas en el pool
-    queueLimit: 0,            // Sin límite en la cola para solicitudes pendientes
-    enableKeepAlive: true,    // Mantener las conexiones vivas (útil para cloud)
-    keepAliveInitialDelay: 0, // Delay inicial para keep-alive
-    // En entornos como Aiven, a veces se recomienda un `connectTimeout` y `acquireTimeout`
-    // para manejar conexiones lentas, pero se deben ajustar con cuidado.
-    // connectTimeout: 10000, // 10 segundos
-    // acquireTimeout: 10000 // 10 segundos para adquirir del pool
-};
+// --- RUTAS DE LA API ---
 
-let dbPool; // Renombramos a dbPool para claridad
-const MAX_POOL_INIT_RETRIES = 10; // Máximo de reintentos para iniciar el pool
-let poolInitRetries = 0;
-
-// Función para inicializar el pool de conexiones y manejar reintentos
-function initializeDbPool(initialAttempt = true) {
-    console.log(`[APP DB] Intentando inicializar Pool de MySQL... (Intento ${poolInitRetries + 1} de ${MAX_POOL_INIT_RETRIES})`);
-
-    try {
-        dbPool = mysql.createPool(dbConfig);
-
-        // Intentar obtener una conexión para verificar que el pool está operativo
-        dbPool.getConnection((err, connection) => {
-            if (err) {
-                console.error('[APP DB] Error al obtener conexión inicial del Pool:', err.message);
-                if (err.code === 'PROTOCOL_CONNECTION_LOST' || err.code === 'ECONNREFUSED' || err.fatal) {
-                    console.log('[APP DB] Fallo de conexión inicial del Pool. Reintentando...');
-                } else {
-                    console.error('[APP DB] Otro error no fatal durante la inicialización del Pool:', err);
-                }
-
-                if (poolInitRetries < MAX_POOL_INIT_RETRIES - 1) {
-                    poolInitRetries++;
-                    setTimeout(() => initializeDbPool(false), 1000 * Math.pow(2, poolInitRetries));
-                } else {
-                    console.error('[APP DB] Número máximo de reintentos de inicialización del Pool alcanzado. La aplicación no podrá conectar a la DB.');
-                    if (initialAttempt && module.exports.onDbConnectionFailure) {
-                        module.exports.onDbConnectionFailure(new Error("No se pudo conectar a la DB después de máximos reintentos."));
-                    }
-                }
-                return; // Importante para no liberar la conexión si hubo error
-            }
-
-            console.log('[APP DB] Pool de conexiones a la base de datos MySQL inicializado y conectado.');
-            connection.release(); // ¡Liberar la conexión de vuelta al pool inmediatamente!
-            poolInitRetries = 0; // Reinicia el contador de reintentos
-            if (initialAttempt && module.exports.onDbConnectionSuccess) {
-                module.exports.onDbConnectionSuccess(dbPool);
-            }
-        });
-
-        // Manejo de errores a nivel del pool (para errores que no son de conexión directa, sino de las conexiones dentro del pool)
-        dbPool.on('error', err => {
-            console.error('[APP DB Pool] Error en el pool de conexiones:', err);
-            if (err.code === 'PROTOCOL_CONNECTION_LOST' || err.code === 'ECONNREFUSED' || err.fatal) {
-                console.warn('[APP DB Pool] Conexión interna del pool perdida o rechazada. El pool intentará manejar la reconexión. Si esto persiste, revisar configuración del pool o conectividad.');
-                // El pool gestiona la reconexión de sus conexiones internas.
-                // No necesitamos llamar a `initializeDbPool` aquí a menos que el pool falle completamente.
-            } else {
-                console.error('[APP DB Pool] Otro error en el pool:', err);
-            }
-        });
-
-    } catch (error) {
-        console.error('[APP DB] Error fatal al crear el Pool de conexiones:', error.stack);
-        if (initialAttempt && module.exports.onDbConnectionFailure) {
-            module.exports.onDbConnectionFailure(new Error("Error fatal al crear el pool de DB."));
-        }
-    }
-}
-
-// Función de utilidad para ejecutar consultas usando el Pool de conexiones
-function executeQuery(sql, params = []) {
-    return new Promise((resolve, reject) => {
-        if (!dbPool) {
-            console.error('[APP DB] executeQuery: El pool de conexiones no está inicializado.');
-            return reject(new Error('Pool de DB no inicializado.'));
-        }
-
-        dbPool.getConnection((err, connection) => {
-            if (err) {
-                console.error('[APP DB] Error al obtener conexión del pool para query:', err.stack);
-                // Si no se puede obtener una conexión, el pool puede estar saturado o la DB no disponible
-                return reject(new Error('No se pudo obtener conexión de la DB. ' + err.message));
-            }
-            connection.query(sql, params, (error, results, fields) => {
-                connection.release(); // ¡IMPORTANTE! Liberar la conexión de vuelta al pool
-                if (error) {
-                    console.error('[APP DB] Error al ejecutar consulta:', error.stack);
-                    return reject(error);
-                }
-                resolve(results);
-            });
-        });
-    });
-}
-
-// RUTAS DE LA API
 // Obtener todas las tareas
 app.get('/api/tareas', async (req, res) => {
     console.log('[APP] GET /api/tareas solicitada');
@@ -124,7 +22,7 @@ app.get('/api/tareas', async (req, res) => {
         res.json(results);
     } catch (err) {
         console.error('[APP] Error al obtener tareas:', err);
-        // Devolver un 503 si el error es de conexión/pool no disponible, 500 para otros errores.
+        // Si el pool no está inicializado o hay un problema de conexión grave
         const statusCode = err.message.includes('Pool de DB no inicializado') || err.message.includes('No se pudo obtener conexión') ? 503 : 500;
         res.status(statusCode).json({ error: 'Error interno del servidor al obtener tareas', details: err.message });
     }
@@ -141,7 +39,9 @@ app.post('/api/tareas', async (req, res) => {
     try {
         const result = await executeQuery('INSERT INTO tareas (descripcion) VALUES (?)', [descripcion]);
         console.log(`[APP] Tarea agregada con ID: ${result.insertId}`);
-        res.status(201).json({ id: result.insertId, descripcion, completada: false });
+        // Considera devolver la tarea completa, incluyendo fecha_creacion, si tu base de datos la genera automáticamente.
+        // Podrías hacer un SELECT by ID después de la inserción, o asumir valores por defecto.
+        res.status(201).json({ id: result.insertId, descripcion, completada: 0 }); // Usar 0 para false si DB es TINYINT
     } catch (err) {
         console.error('[APP] Error al agregar tarea:', err);
         const statusCode = err.message.includes('Pool de DB no inicializado') || err.message.includes('No se pudo obtener conexión') ? 503 : 500;
@@ -158,13 +58,15 @@ app.put('/api/tareas/:id', async (req, res) => {
     if (!id || isNaN(parseInt(id))) {
         return res.status(400).json({ error: 'ID de tarea inválido o faltante' });
     }
+    // Asegúrate de que `completada` sea un booleano (true/false) y conviértelo a 0/1 para MySQL
     if (typeof completada !== 'boolean') {
         return res.status(400).json({ error: 'El estado "completada" debe ser un booleano' });
     }
+    const completadaForDb = completada ? 1 : 0; // Convertir booleano a 0 o 1
 
     try {
         const sql = 'UPDATE tareas SET completada = ? WHERE id = ?';
-        const result = await executeQuery(sql, [completada, id]);
+        const result = await executeQuery(sql, [completadaForDb, id]);
 
         if (result.affectedRows === 0) {
             return res.status(404).json({ error: 'Tarea no encontrada' });
@@ -201,6 +103,8 @@ app.delete('/api/tareas/:id', async (req, res) => {
     }
 });
 
+// --- Manejo de errores ---
+
 // Manejo de rutas no encontradas (404)
 app.use((req, res, next) => {
     console.warn(`[APP] Ruta no encontrada: ${req.method} ${req.originalUrl}`);
@@ -213,14 +117,30 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: 'Error interno del servidor', details: err.message });
 });
 
-// Exportamos la app y la función para iniciar el Pool de la DB
-module.exports = {
-    app,
-    initiateDbConnection: (onSuccess, onFailure) => {
-        module.exports.onDbConnectionSuccess = onSuccess;
-        module.exports.onDbConnectionFailure = onFailure;
-        initializeDbPool(true); // Inicia la inicialización del pool
-    },
-    // Exponer executeQuery para pruebas de integración o si se necesita directamente fuera de las rutas.
-    executeQuery: executeQuery
-};
+// --- Inicio del Servidor ---
+// Solo inicia el servidor si `app.js` es el módulo principal (ejecutado directamente)
+async function startServer() {
+    try {
+        await initializeDbPool(); // Inicializa el pool de DB antes de escuchar
+        app.listen(PORT, () => {
+            console.log(`Servidor escuchando en el puerto ${PORT}`);
+            console.log(`Accede a la API en http://localhost:${PORT}/api/tareas`);
+            // Puedes agregar un log para el frontend si tienes archivos estáticos
+            console.log(`Sirviendo archivos estáticos desde /public en http://localhost:${PORT}/`);
+        });
+    } catch (error) {
+        console.error('[APP] Error al iniciar el servidor:', error.message);
+        // Si la conexión a la DB falla fatalmente al inicio, la aplicación no puede funcionar
+        process.exit(1); 
+    }
+}
+
+// Esto asegura que el servidor solo se inicie cuando `app.js` se ejecuta directamente
+// (por ejemplo, con `node app.js` o `npm start`),
+// y no cuando es importado por otros módulos (como Jest para pruebas).
+if (require.main === module) {
+    startServer();
+}
+
+// Exporta la instancia de la aplicación Express para que pueda ser utilizada en pruebas
+module.exports = app;
