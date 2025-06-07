@@ -14,9 +14,13 @@ async function initializeDbPool() {
         user: process.env.DB_USER || 'root',
         password: process.env.DB_PASSWORD || 'root',
         database: process.env.DB_NAME || 'lista_tareas_db',
+        port: process.env.DB_PORT ? parseInt(process.env.DB_PORT) : 3306,
         waitForConnections: true,
         connectionLimit: 10,
-        queueLimit: 0
+        queueLimit: 0,
+        ssl: {
+        rejectUnauthorized: false // Ignora la verificación del certificado SSL, común en entornos de desarrollo/prueba.
+    }
     };
 
     const maxRetries = 10;
