@@ -1,6 +1,6 @@
 // app.js
 const express = require('express');
-const mysql = require('mysql2/promise'); // Mantén mysql2, ya que es el que soporta createPool
+const mysql = require('mysql2'); // Mantén mysql2, ya que es el que soporta createPool
 const cors = require('cors');
 
 const app = express();
@@ -33,46 +33,49 @@ const MAX_POOL_INIT_RETRIES = 10; // Máximo de reintentos para iniciar el pool
 let poolInitRetries = 0;
 
 // Función para inicializar el pool de conexiones y manejar reintentos
-async function initializeDbPool(initialAttempt = true) { // ¡Hacerla async!
+function initializeDbPool(initialAttempt = true) {
     console.log(`[APP DB] Intentando inicializar Pool de MySQL... (Intento ${poolInitRetries + 1} de ${MAX_POOL_INIT_RETRIES})`);
 
     try {
-        dbPool = mysql.createPool(dbConfig); // dbPool es ahora un objeto basado en promesas
+        dbPool = mysql.createPool(dbConfig);
 
         // Intentar obtener una conexión para verificar que el pool está operativo
-        let connection; // Declarar la conexión aquí
-        try {
-            connection = await dbPool.getConnection(); // <-- ¡Aquí se usa await!
+        dbPool.getConnection((err, connection) => {
+            if (err) {
+                console.error('[APP DB] Error al obtener conexión inicial del Pool:', err.message);
+                if (err.code === 'PROTOCOL_CONNECTION_LOST' || err.code === 'ECONNREFUSED' || err.fatal) {
+                    console.log('[APP DB] Fallo de conexión inicial del Pool. Reintentando...');
+                } else {
+                    console.error('[APP DB] Otro error no fatal durante la inicialización del Pool:', err);
+                }
+
+                if (poolInitRetries < MAX_POOL_INIT_RETRIES - 1) {
+                    poolInitRetries++;
+                    setTimeout(() => initializeDbPool(false), 1000 * Math.pow(2, poolInitRetries));
+                } else {
+                    console.error('[APP DB] Número máximo de reintentos de inicialización del Pool alcanzado. La aplicación no podrá conectar a la DB.');
+                    if (initialAttempt && module.exports.onDbConnectionFailure) {
+                        module.exports.onDbConnectionFailure(new Error("No se pudo conectar a la DB después de máximos reintentos."));
+                    }
+                }
+                return; // Importante para no liberar la conexión si hubo error
+            }
+
             console.log('[APP DB] Pool de conexiones a la base de datos MySQL inicializado y conectado.');
-            connection.release(); // <-- Liberar la conexión basada en promesas
-            poolInitRetries = 0;
+            connection.release(); // ¡Liberar la conexión de vuelta al pool inmediatamente!
+            poolInitRetries = 0; // Reinicia el contador de reintentos
             if (initialAttempt && module.exports.onDbConnectionSuccess) {
                 module.exports.onDbConnectionSuccess(dbPool);
             }
-        } catch (err) {
-            console.error('[APP DB] Error al obtener conexión inicial del Pool:', err.message);
-            if (err.code === 'PROTOCOL_CONNECTION_LOST' || err.code === 'ECONNREFUSED' || err.fatal) {
-                console.log('[APP DB] Fallo de conexión inicial del Pool. Reintentando...');
-            } else {
-                console.error('[APP DB] Otro error no fatal durante la inicialización del Pool:', err);
-            }
+        });
 
-            if (poolInitRetries < MAX_POOL_INIT_RETRIES - 1) {
-                poolInitRetries++;
-                setTimeout(() => initializeDbPool(false), 1000 * Math.pow(2, poolInitRetries));
-            } else {
-                console.error('[APP DB] Número máximo de reintentos de inicialización del Pool alcanzado. La aplicación no podrá conectar a la DB.');
-                if (initialAttempt && module.exports.onDbConnectionFailure) {
-                    module.exports.onDbConnectionFailure(new Error("No se pudo conectar a la DB después de máximos reintentos."));
-                }
-            }
-            if (connection) connection.release(); // Asegurarse de liberar la conexión si se obtuvo y luego falló
-        }
-
+        // Manejo de errores a nivel del pool (para errores que no son de conexión directa, sino de las conexiones dentro del pool)
         dbPool.on('error', err => {
             console.error('[APP DB Pool] Error en el pool de conexiones:', err);
             if (err.code === 'PROTOCOL_CONNECTION_LOST' || err.code === 'ECONNREFUSED' || err.fatal) {
                 console.warn('[APP DB Pool] Conexión interna del pool perdida o rechazada. El pool intentará manejar la reconexión. Si esto persiste, revisar configuración del pool o conectividad.');
+                // El pool gestiona la reconexión de sus conexiones internas.
+                // No necesitamos llamar a `initializeDbPool` aquí a menos que el pool falle completamente.
             } else {
                 console.error('[APP DB Pool] Otro error en el pool:', err);
             }
@@ -87,25 +90,29 @@ async function initializeDbPool(initialAttempt = true) { // ¡Hacerla async!
 }
 
 // Función de utilidad para ejecutar consultas usando el Pool de conexiones
-async function executeQuery(sql, params = []) { // ¡Hacerla async!
-    if (!dbPool) {
-        console.error('[APP DB] executeQuery: El pool de conexiones no está inicializado.');
-        // En lugar de devolver un Promise.reject, puedes lanzar un error directamente
-        throw new Error('Pool de DB no inicializado.');
-    }
+function executeQuery(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        if (!dbPool) {
+            console.error('[APP DB] executeQuery: El pool de conexiones no está inicializado.');
+            return reject(new Error('Pool de DB no inicializado.'));
+        }
 
-    let connection; // Declarar la conexión aquí
-    try {
-        connection = await dbPool.getConnection(); // <-- ¡Aquí se usa await!
-        // connection.query ahora también devuelve una promesa
-        const [results] = await connection.query(sql, params); // <-- ¡Aquí se usa await!
-        return results; // Devolver los resultados directamente
-    } catch (err) {
-        console.error('[APP DB] Error al ejecutar consulta:', err.stack);
-        throw err; // Relanzar el error para que sea capturado por las rutas
-    } finally {
-        if (connection) connection.release(); // ¡IMPORTANTE! Asegurar que la conexión se libere siempre
-    }
+        dbPool.getConnection((err, connection) => {
+            if (err) {
+                console.error('[APP DB] Error al obtener conexión del pool para query:', err.stack);
+                // Si no se puede obtener una conexión, el pool puede estar saturado o la DB no disponible
+                return reject(new Error('No se pudo obtener conexión de la DB. ' + err.message));
+            }
+            connection.query(sql, params, (error, results, fields) => {
+                connection.release(); // ¡IMPORTANTE! Liberar la conexión de vuelta al pool
+                if (error) {
+                    console.error('[APP DB] Error al ejecutar consulta:', error.stack);
+                    return reject(error);
+                }
+                resolve(results);
+            });
+        });
+    });
 }
 
 // RUTAS DE LA API
