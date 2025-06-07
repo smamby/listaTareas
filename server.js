@@ -1,6 +1,6 @@
 // server.js (Punto de entrada)
-const { app, initiateDbConnection } = require('./app');
-const { initializeDbPool, closeDbPool } = require('./db');
+const app = require('./app'); // Solo importa la aplicación Express
+const { initializeDbPool, closeDbPool } = require('./db'); // Importa las funciones de DB
 
 const port = process.env.PORT || 8000;
 let serverInstance;
@@ -13,6 +13,8 @@ async function startAppAndDb() {
         console.log('[SERVER] Conexión a DB establecida, iniciando servidor HTTP.');
         serverInstance = app.listen(port, () => {
             console.log(`[SERVER APP] Servidor escuchando en http://localhost:${port}`);
+            console.log(`[SERVER APP] Accede a la API en http://localhost:${port}/api/tareas`);
+            console.log(`[SERVER APP] Sirviendo archivos estáticos desde /public en http://localhost:${port}/`);
         });
     } catch (err) {
         console.error('[SERVER] Falló la conexión inicial a la DB. El servidor HTTP no se iniciará.', err.message);

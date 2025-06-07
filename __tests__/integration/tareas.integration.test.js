@@ -1,105 +1,94 @@
 // __tests__/integration/tareas.integration.test.js
 const request = require('supertest');
-const { initializeDbPool, closeDbPool, executeQuery } = require('../../db')
-const { app, initiateDbConnection } = require('../../app');
+// Importa las funciones de DB directamente, NO desde app.js
+const { initializeDbPool, closeDbPool, executeQuery } = require('../../db'); 
+const app = require('../../app'); // La aplicación Express
 
-// Mantenemos una referencia al servidor HTTP
-let server;
-// Mantenemos una referencia al pool de la base de datos real
-let dbPool;
+let server; // Para la instancia del servidor HTTP que Jest controlará
+let dbPoolInstance; // Para la instancia del pool de la DB real
 
-// --- Configuración antes de TODOS los tests de integración ---
 beforeAll(async () => {
-    // Inicializa la conexión a la DB real (no simulada)
-    // La initiateDbConnection debe ser asíncrona o usar promesas/callbacks.
-    // Asegúrate de que DB_HOST apunte al servicio 'mysql_db' (definido en docker-compose.yml)
-    // y que las otras variables de entorno (DB_USER, DB_PASSWORD, DB_NAME) estén disponibles.
-    await new Promise((resolve, reject) => {
-        initiateDbConnection(
-            (pool) => {
-                console.log('[INTEGRATION TESTS] Real DB connection successful.');
-                dbPool = pool;
-                // Inicia el servidor Express en un puerto diferente para los tests
-                // Esto es importante para no chocar con el puerto 8000 si tu app ya está corriendo
-                // Si tu app ya está corriendo en Docker, puedes hacer peticiones a http://app:8000
-                // pero para pruebas locales directas, es mejor iniciarla aquí.
-                // Opcional: si la app ya corre en Docker, puedes omitir 'server = app.listen()'
-                // y hacer las peticiones a http://localhost:8000 o http://app:8000
-                server = app.listen(8001, () => {
-                    console.log('[INTEGRATION TESTS] Express app started on port 8001 for tests.');
-                    resolve();
-                });
-            },
-            (err) => {
-                console.error('[INTEGRATION TESTS] Real DB connection failed:', err);
-                reject(err);
-            }
-        );
+    // Inicializa la conexión a la DB real
+    try {
+        dbPoolInstance = await initializeDbPool(); // Usar initializeDbPool
+        console.log('[INTEGRATION TESTS] Real DB connection successful.');
+
+        // Inicia el servidor Express en un puerto disponible (puerto 0)
+        // supertest se conectará a esta instancia
+        server = await new Promise(resolve => {
+            const runningServer = app.listen(0, () => {
+                const port = runningServer.address().port;
+                console.log(`[INTEGRATION TESTS] Servidor de Express iniciado en puerto ${port} para tests.`);
+                resolve(runningServer);
+            });
+        });
+    } catch (error) {
+        console.error('[INTEGRATION TESTS] Error FATAL al iniciar DB o servidor:', error.message);
+        process.exit(1); // Salir si no se puede conectar a la DB real o iniciar el servidor
+    }
+}, 30000); // Aumenta el timeout para beforeAll
+
+afterAll(async () => {
+    // Cierra el servidor Express
+    if (server) {
+        await new Promise(resolve => server.close(() => {
+            console.log('[INTEGRATION TESTS] Servidor Express cerrado.');
+            resolve();
+        }));
+    }
+    // Cierra el pool de conexiones de la DB real
+    if (dbPoolInstance) {
+        await closeDbPool();
+        console.log('[INTEGRATION TESTS] DB Pool cerrado.');
+    }
+}, 10000); 
+
+describe('API de Tareas (Integración con DB Real)', () => {
+    // Limpiar la base de datos antes de cada test para asegurar un estado limpio
+    beforeEach(async () => {
+        try {
+            await executeQuery('DELETE FROM tareas'); // Limpia todas las tareas
+            // console.log('[INTEGRATION TESTS] Database cleaned for new test.');
+        } catch (error) {
+            console.error('[INTEGRATION TESTS] Error cleaning database before test:', error.message);
+            // Si la tabla no existe aún, podría dar un error, lo cual es normal la primera vez.
+        }
     });
 
-    // Opcional: Limpiar la base de datos antes de las pruebas de integración
-    // Esto asegura que cada corrida de tests empiece con un estado limpio.
-    try {
-        await dbPool.query('DELETE FROM tareas'); // Limpia la tabla
-        console.log('[INTEGRATION TESTS] Cleared "tareas" table.');
-    } catch (error) {
-        console.error('[INTEGRATION TESTS] Error clearing "tareas" table:', error);
-        // Si la tabla no existe aún, podría dar un error, lo cual es normal la primera vez.
-    }
-}, 30000); // Aumenta el timeout si la DB tarda en arrancar (30 segundos)
-
-// --- Configuración después de TODOS los tests de integración ---
-afterAll(async () => {
-    if (server) {
-        await new Promise(resolve => server.close(resolve));
-        console.log('[INTEGRATION TESTS] Express app closed.');
-    }
-    if (dbPool) {
-        await dbPool.end(); // Cierra el pool de conexiones a la DB
-        console.log('[INTEGRATION TESTS] DB pool closed.');
-    }
-});
-
-// --- Pruebas de Integración ---
-describe('API de Tareas (Integración con DB Real)', () => {
-
-    // Test POST: Crear una nueva tarea
     it('POST /api/tareas - debería crear una nueva tarea en la DB real', async () => {
         const nuevaTarea = { descripcion: 'Comprar pan', completada: false };
-        const response = await request(server) // Usamos 'server' que iniciamos en beforeAll
+        const response = await request(server) 
             .post('/api/tareas')
             .send(nuevaTarea);
 
         expect(response.statusCode).toBe(201);
         expect(response.body.descripcion).toBe(nuevaTarea.descripcion);
         expect(response.body).toHaveProperty('id');
-        expect(response.body.completada).toBe(false);
+        expect(response.body.completada).toBe(0); // Expect 0, not false, from DB
 
-        // Opcional: Verificar directamente en la DB
-        const [rows] = await dbPool.query('SELECT * FROM tareas WHERE id = ?', [response.body.id]);
-        expect(rows.length).toBe(1);
-        expect(rows[0].descripcion).toBe(nuevaTarea.descripcion);
+        // Verificar directamente en la DB usando executeQuery
+        const results = await executeQuery('SELECT * FROM tareas WHERE id = ?', [response.body.id]);
+        expect(results.length).toBe(1);
+        expect(results[0].descripcion).toBe(nuevaTarea.descripcion);
+        expect(results[0].completada).toBe(0);
     });
 
-    // Test GET: Obtener todas las tareas (después de la creación anterior)
     it('GET /api/tareas - debería obtener tareas de la DB real', async () => {
+        await executeQuery('INSERT INTO tareas (descripcion, completada) VALUES (?, ?)', ['Tarea para GET', 0]);
         const response = await request(server).get('/api/tareas');
+
         expect(response.statusCode).toBe(200);
         expect(Array.isArray(response.body)).toBe(true);
-        expect(response.body.length).toBeGreaterThan(0); // Debería tener al menos la tarea que creamos
+        expect(response.body.length).toBeGreaterThan(0);
 
-        // Verifica que la tarea creada anteriormente esté presente
         expect(response.body).toContainEqual(
-            expect.objectContaining({ descripcion: 'Comprar pan' })
+            expect.objectContaining({ descripcion: 'Tarea para GET' })
         );
     });
 
-    // Test PUT: Actualizar una tarea
     it('PUT /api/tareas/:id - debería actualizar una tarea en la DB real', async () => {
-        // Primero, crea una tarea para asegurar que exista una para actualizar
-        const { body: { id: taskId } } = await request(server)
-            .post('/api/tareas')
-            .send({ descripcion: 'Tarea para actualizar', completada: false });
+        const insertResult = await executeQuery('INSERT INTO tareas (descripcion) VALUES (?)', ['Tarea para actualizar']);
+        const taskId = insertResult.insertId;
 
         const datosActualizacion = { completada: true };
         const response = await request(server)
@@ -109,36 +98,28 @@ describe('API de Tareas (Integración con DB Real)', () => {
         expect(response.statusCode).toBe(200);
         expect(response.body.message).toBe('Tarea actualizada correctamente');
 
-        // Verifica directamente en la DB
-        const [rows] = await dbPool.query('SELECT * FROM tareas WHERE id = ?', [taskId]);
-        expect(rows.length).toBe(1);
-        expect(rows[0].completada).toBe(1); // MySQL puede devolver 1 para true
+        const [result] = await executeQuery('SELECT completada FROM tareas WHERE id = ?', [taskId]);
+        expect(result.completada).toBe(1); 
     });
 
-    // Test DELETE: Eliminar una tarea
     it('DELETE /api/tareas/:id - debería eliminar una tarea de la DB real', async () => {
-        // Primero, crea una tarea para asegurar que exista una para eliminar
-        const { body: { id: taskId } } = await request(server)
-            .post('/api/tareas')
-            .send({ descripcion: 'Tarea para eliminar', completada: false });
+        const insertResult = await executeQuery('INSERT INTO tareas (descripcion) VALUES (?)', ['Tarea para eliminar']);
+        const taskId = insertResult.insertId;
 
         const response = await request(server).delete(`/api/tareas/${taskId}`);
         expect(response.statusCode).toBe(200);
         expect(response.body.message).toBe('Tarea eliminada correctamente');
 
-        // Verifica directamente en la DB
-        const [rows] = await dbPool.query('SELECT * FROM tareas WHERE id = ?', [taskId]);
-        expect(rows.length).toBe(0); // La tarea ya no debería existir
+        const results = await executeQuery('SELECT * FROM tareas WHERE id = ?', [taskId]);
+        expect(results.length).toBe(0); 
     });
 
-    // Test de validación (ej. POST con datos inválidos)
     it('POST /api/tareas - debería devolver 400 si falta la descripción', async () => {
         const response = await request(server)
             .post('/api/tareas')
-            .send({}); // Objeto vacío, falta descripción
+            .send({}); 
 
         expect(response.statusCode).toBe(400);
-        expect(response.body.error).toBeDefined(); // O un mensaje de error específico
+        expect(response.body.error).toBe('La descripción es requerida');
     });
-
 });

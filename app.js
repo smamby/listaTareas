@@ -2,16 +2,15 @@
 const express = require('express');
 const cors = require('cors');
 // Importa las funciones de nuestro nuevo módulo de base de datos
-const { initializeDbPool, getDbPool, executeQuery } = require('./db'); 
+const { executeQuery } = require('./db'); // Solo necesitamos executeQuery aquí, no initializeDbPool, getDbPool
 
 const app = express();
-const PORT = process.env.APP_PORT || 8000;
+const PORT = process.env.APP_PORT || 8000; // Mantén el PORT para referencia
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public')); // Si tienes archivos estáticos en `public`
-
 
 // --- RUTAS DE LA API ---
 
@@ -23,7 +22,6 @@ app.get('/api/tareas', async (req, res) => {
         res.json(results);
     } catch (err) {
         console.error('[APP] Error al obtener tareas:', err);
-        // Si el pool no está inicializado o hay un problema de conexión grave
         const statusCode = err.message.includes('Pool de DB no inicializado') || err.message.includes('No se pudo obtener conexión') ? 503 : 500;
         res.status(statusCode).json({ error: 'Error interno del servidor al obtener tareas', details: err.message });
     }
@@ -40,9 +38,7 @@ app.post('/api/tareas', async (req, res) => {
     try {
         const result = await executeQuery('INSERT INTO tareas (descripcion) VALUES (?)', [descripcion]);
         console.log(`[APP] Tarea agregada con ID: ${result.insertId}`);
-        // Considera devolver la tarea completa, incluyendo fecha_creacion, si tu base de datos la genera automáticamente.
-        // Podrías hacer un SELECT by ID después de la inserción, o asumir valores por defecto.
-        res.status(201).json({ id: result.insertId, descripcion, completada: 0 }); // Usar 0 para false si DB es TINYINT
+        res.status(201).json({ id: result.insertId, descripcion, completada: 0 });
     } catch (err) {
         console.error('[APP] Error al agregar tarea:', err);
         const statusCode = err.message.includes('Pool de DB no inicializado') || err.message.includes('No se pudo obtener conexión') ? 503 : 500;
@@ -59,11 +55,10 @@ app.put('/api/tareas/:id', async (req, res) => {
     if (!id || isNaN(parseInt(id))) {
         return res.status(400).json({ error: 'ID de tarea inválido o faltante' });
     }
-    // Asegúrate de que `completada` sea un booleano (true/false) y conviértelo a 0/1 para MySQL
     if (typeof completada !== 'boolean') {
         return res.status(400).json({ error: 'El estado "completada" debe ser un booleano' });
     }
-    const completadaForDb = completada ? 1 : 0; // Convertir booleano a 0 o 1
+    const completadaForDb = completada ? 1 : 0;
 
     try {
         const sql = 'UPDATE tareas SET completada = ? WHERE id = ?';
@@ -118,30 +113,5 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: 'Error interno del servidor', details: err.message });
 });
 
-// --- Inicio del Servidor ---
-// Solo inicia el servidor si `app.js` es el módulo principal (ejecutado directamente)
-async function startServer() {
-    try {
-        await initializeDbPool(); // Inicializa el pool de DB antes de escuchar
-        app.listen(PORT, () => {
-            console.log(`Servidor escuchando en el puerto ${PORT}`);
-            console.log(`Accede a la API en http://localhost:${PORT}/api/tareas`);
-            // Puedes agregar un log para el frontend si tienes archivos estáticos
-            console.log(`Sirviendo archivos estáticos desde /public en http://localhost:${PORT}/`);
-        });
-    } catch (error) {
-        console.error('[APP] Error al iniciar el servidor:', error.message);
-        // Si la conexión a la DB falla fatalmente al inicio, la aplicación no puede funcionar
-        process.exit(1); 
-    }
-}
-
-// Esto asegura que el servidor solo se inicie cuando `app.js` se ejecuta directamente
-// (por ejemplo, con `node app.js` o `npm start`),
-// y no cuando es importado por otros módulos (como Jest para pruebas).
-if (require.main === module) {
-    startServer();
-}
-
-// Exporta la instancia de la aplicación Express para que pueda ser utilizada en pruebas
+// Exporta la instancia de la aplicación Express
 module.exports = app;
