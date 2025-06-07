@@ -62,7 +62,7 @@ app.put('/api/tareas/:id', async (req, res) => {
 
     try {
         const sql = 'UPDATE tareas SET completada = ? WHERE id = ?';
-        const result = await executeQuery(sql, [completadaForDb, id]);
+        const result = await executeQuery(sql, [completadaForDb, parseInt(id)]);
 
         if (result.affectedRows === 0) {
             return res.status(404).json({ error: 'Tarea no encontrada' });
@@ -86,7 +86,7 @@ app.delete('/api/tareas/:id', async (req, res) => {
 
     try {
         const sql = 'DELETE FROM tareas WHERE id = ?';
-        const result = await executeQuery(sql, [id]);
+        const result = await executeQuery(sql, [parseInt(id)]);
 
         if (result.affectedRows === 0) {
             return res.status(404).json({ error: 'Tarea no encontrada' });
