@@ -1,4 +1,4 @@
-// db.js
+//  db.js
 const mysql = require('mysql2/promise'); // Usando la versión basada en promesas
 
 let dbPool;
