@@ -1,11 +1,6 @@
 // __tests__/integration/tareas.integration.test.js
 const request = require('supertest');
-// NO MOCKEES 'mysql2' aquí. Queremos la base de datos real.
-
-// Importa tu aplicación Express
-// Es crucial que tu app.js o server.js exporte la instancia de Express 'app'
-// y no inicie el servidor HTTP directamente en el archivo importado.
-// server.js debería contener app.listen y app.js debería exportar 'app'.
+const { initializeDbPool, closeDbPool, executeQuery } = require('../../db')
 const { app, initiateDbConnection } = require('../../app');
 
 // Mantenemos una referencia al servidor HTTP

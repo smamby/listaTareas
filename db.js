@@ -1,4 +1,4 @@
-// database.js
+// db.js
 const mysql = require('mysql2/promise'); // Usando la versión basada en promesas
 
 let dbPool;
@@ -49,6 +49,26 @@ function getDbPool() {
     return dbPool;
 }
 
+async function executeQuery(sql, values = []) {
+    if (!dbPool) {
+        throw new Error('Pool de DB no inicializado. No se puede ejecutar la consulta.');
+    }
+    let connection;
+    try {
+        connection = await dbPool.getConnection();
+        const [rows] = await connection.execute(sql, values); // Usar connection.execute para prepared statements
+        return rows;
+    } catch (err) {
+        console.error('[DB] Error ejecutando consulta:', err.message);
+        throw err;
+    } finally {
+        if (connection) {
+            connection.release();
+        }
+    }
+}
+
+
 // Función para cerrar el pool (útil para un apagado elegante o para tests)
 async function closeDbPool() {
     if (dbPool) {
@@ -62,5 +82,6 @@ async function closeDbPool() {
 module.exports = {
     initializeDbPool,
     getDbPool,
-    closeDbPool
+    closeDbPool,
+    executeQuery
 };

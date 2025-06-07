@@ -1,33 +1,45 @@
 // server.js (Punto de entrada)
-const { app, initiateDbConnection } = require('./app'); // Importa desde app.js
+const { app, initiateDbConnection } = require('./app');
+const { initializeDbPool, closeDbPool } = require('./db');
 
 const port = process.env.PORT || 8000;
 let serverInstance;
 
 console.log('[SERVER] Iniciando aplicación...');
 
-initiateDbConnection(
-    (dbInstance) => { // onSuccess
+async function startAppAndDb() {
+    try {
+        await initializeDbPool(); // Inicializa el pool de la DB
         console.log('[SERVER] Conexión a DB establecida, iniciando servidor HTTP.');
         serverInstance = app.listen(port, () => {
             console.log(`[SERVER APP] Servidor escuchando en http://localhost:${port}`);
         });
-    },
-    (err) => { // onFailure
+    } catch (err) {
         console.error('[SERVER] Falló la conexión inicial a la DB. El servidor HTTP no se iniciará.', err.message);
-        // Podrías decidir salir del proceso si la DB es crítica para el arranque.
-        // process.exit(1);
+        process.exit(1); // Salir si no se puede conectar a la DB
     }
-);
+}
 
-// Para manejo elegante de cierre (opcional pero bueno para producción)
+startAppAndDb();
+
+// Para manejo elegante de cierre
 process.on('SIGTERM', () => {
     console.log('SIGTERM signal received: closing HTTP server');
     if (serverInstance) {
-        serverInstance.close(() => {
+        serverInstance.close(async () => {
             console.log('HTTP server closed');
-            // Aquí podrías cerrar la conexión a la DB si es necesario
-            // db.end(...); // Necesitarías obtener la instancia de 'db' desde app.js
+            await closeDbPool(); // Cerrar el pool de la DB
+            process.exit(0);
+        });
+    }
+});
+
+process.on('SIGINT', () => { // También manejar Ctrl+C
+    console.log('SIGINT signal received: closing HTTP server');
+    if (serverInstance) {
+        serverInstance.close(async () => {
+            console.log('HTTP server closed');
+            await closeDbPool();
             process.exit(0);
         });
     }

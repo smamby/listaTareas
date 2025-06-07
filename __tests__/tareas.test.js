@@ -1,5 +1,7 @@
 // __tests__/tareas.test.js
 const request = require('supertest');
+const app = require('../app'); // La aplicación Express
+// No necesitamos `const db = require('../db');` aquí si mockeamos el módulo completo.
 
 // Mocks
 let mockTasks = [ // Usa `let` para poder reasignarlo si lo modificas en los tests
@@ -8,60 +10,15 @@ let mockTasks = [ // Usa `let` para poder reasignarlo si lo modificas en los tes
 ];
 
 // Mockear el módulo de la base de datos ANTES de importar la aplicación
+// para asegurarnos de que `app.js` reciba las versiones mockeadas.
+const { initializeDbPool, closeDbPool, executeQuery } = require('../db'); // Importa las funciones mockeadas
 jest.mock('../db', () => ({
-    initializeDbPool: jest.fn().mockResolvedValue(true), // Mockear la inicialización
-    getDbPool: jest.fn(() => ({ // Mockear getDbPool para devolver un objeto pool mockeado
-        query: jest.fn((sql, values) => {
-            console.log(`[TESTS MOCK DB] Ejecutando query: ${sql}, valores: ${JSON.stringify(values)}`);
-            if (sql.includes('SELECT')) {
-                // Devolver una copia profunda para evitar que los tests muten el mock original
-                return [JSON.parse(JSON.stringify(mockTasks))];
-            }
-            if (sql.includes('INSERT')) {
-                // Simular una inserción, devolver un resultado de inserción mockeado
-                const newId = Math.max(...mockTasks.map(t => t.id)) + 1; // Asignar un nuevo ID incremental
-                const newTask = {
-                    id: newId,
-                    descripcion: values[0],
-                    completada: 0, // Por defecto no completada
-                    fecha_creacion: new Date()
-                };
-                mockTasks.push(newTask);
-                return [{ insertId: newId }];
-            }
-            if (sql.includes('UPDATE')) {
-                // Simular actualización, devolver affectedRows mockeado
-                const idToUpdate = values[1]; // El ID suele ser el segundo elemento en `values` para UPDATE
-                const updatedFields = values[0]; // Los campos a actualizar suelen ser el primer elemento
-                let affectedRows = 0;
-                mockTasks = mockTasks.map(task => {
-                    if (task.id === idToUpdate) {
-                        affectedRows = 1;
-                        return { ...task, ...updatedFields };
-                    }
-                    return task;
-                });
-                return [{ affectedRows: affectedRows }];
-            }
-            if (sql.includes('DELETE')) {
-                // Simular eliminación
-                const idToDelete = values[0];
-                const initialLength = mockTasks.length;
-                mockTasks = mockTasks.filter(t => t.id !== idToDelete);
-                return [{ affectedRows: initialLength - mockTasks.length }];
-            }
-            return [[]]; // Array vacío por defecto para otras consultas
-        }),
-        getConnection: jest.fn(() => ({ // Mockear getConnection si es necesario (no siempre para simple pool.query)
-            release: jest.fn(),
-        })),
-    })),
-    closeDbPool: jest.fn().mockResolvedValue(true), // Mockear el cierre
+    initializeDbPool: jest.fn(), // Solo mockeamos initializeDbPool
+    closeDbPool: jest.fn(), // Solo mockeamos closeDbPool
+    getDbPool: jest.fn(), // Mockear getDbPool si lo usaras directamente (pero app.js usa executeQuery)
+    executeQuery: jest.fn(), // <--- ¡Asegúrate de que executeQuery sea un mock!
 }));
 
-// Ahora importa la aplicación, DESPUÉS de que el módulo de la base de datos ha sido mockeado
-const app = require('../app');
-const { initializeDbPool, closeDbPool, getDbPool } = require('../db'); // Re-importar las funciones mockeadas para usarlas en beforeAll/afterAll
 
 describe('API de Tareas', () => {
     // Antes de todos los tests, asegura que el pool de DB mockeado esté inicializado y resetea los mocks
@@ -72,8 +29,75 @@ describe('API de Tareas', () => {
             { id: 2, descripcion: 'Tarea 2', completada: 1, fecha_creacion: new Date('2025-06-07T01:48:38.289Z') },
         ];
         jest.clearAllMocks(); // Limpiar llamadas a mocks
-        await initializeDbPool(); // Asegura que el initializeDbPool mockeado se "ejecuta"
-        // Este console.log puede quedarse o quitarse, es solo para visibilidad
+
+        // Configura la implementación de executeQuery para cada tipo de consulta
+        executeQuery.mockImplementation(async (sql, values) => {
+            console.log(`[TESTS MOCK DB] Ejecutando query: ${sql}, valores: ${JSON.stringify(values)}`);
+            if (sql.includes('SELECT * FROM tareas')) {
+                return Promise.resolve(JSON.parse(JSON.stringify(mockTasks))); // Devuelve una copia profunda
+            }
+            if (sql.includes('INSERT INTO tareas')) {
+                const newId = mockTasks.length > 0 ? Math.max(...mockTasks.map(t => t.id)) + 1 : 1;
+                const newTask = {
+                    id: newId,
+                    descripcion: values[0],
+                    completada: 0,
+                    fecha_creacion: new Date()
+                };
+                mockTasks.push(newTask);
+                return Promise.resolve({ insertId: newId, affectedRows: 1 });
+            }
+            if (sql.includes('UPDATE tareas SET completada')) {
+                const completadaValue = values[0]; // 0 o 1
+                const idToUpdate = values[1];
+                let affectedRows = 0;
+                mockTasks = mockTasks.map(task => {
+                    if (task.id === idToUpdate) {
+                        affectedRows = 1;
+                        return { ...task, completada: completadaValue };
+                    }
+                    return task;
+                });
+                return Promise.resolve({ affectedRows: affectedRows });
+            }
+            if (sql.includes('DELETE FROM tareas')) {
+                const idToDelete = values[0];
+                const initialLength = mockTasks.length;
+                mockTasks = mockTasks.filter(t => t.id !== idToDelete);
+                return Promise.resolve({ affectedRows: initialLength - mockTasks.length });
+            }
+            if (sql.includes('UPDATE tareas SET completada = ? WHERE id = ?')) {
+                const completadaValue = values[0]; // Este será 0 o 1
+                const idToUpdate = parseInt(values[1], 10); // Asegúrate de convertir a número para la comparación
+                let affectedRows = 0;
+                let updatedTask = null;
+
+                mockTasks = mockTasks.map(task => {
+                    if (task.id === idToUpdate) {
+                        affectedRows = 1;
+                        updatedTask = { ...task, completada: completadaValue };
+                        return updatedTask;
+                    }
+                    return task;
+                });
+                // Devuelve el objeto de resultado de MySQL. No es un array de arrays en este caso.
+                // Usamos el formato que MySQL devuelve para UPDATE: { affectedRows: X }
+                return Promise.resolve({ affectedRows: affectedRows });
+            }
+            if (sql.includes('DELETE FROM tareas WHERE id = ?')) {
+                const idToDelete = parseInt(values[0], 10); // Asegúrate de convertir a número para la comparación
+                const initialLength = mockTasks.length;
+                mockTasks = mockTasks.filter(t => t.id !== idToDelete);
+                // Devuelve el objeto de resultado de MySQL.
+                return Promise.resolve({ affectedRows: initialLength - mockTasks.length });
+            }
+            // Para cualquier otra consulta no mockeada
+            return Promise.resolve([]); 
+        });
+
+        // Asegúrate de que initializeDbPool mockeado no falle
+        initializeDbPool.mockResolvedValue(true); 
+
         console.log('[TESTS] Mock DB connection successful for tests.');
     });
 
@@ -88,12 +112,11 @@ describe('API de Tareas', () => {
         const response = await request(app).get('/api/tareas');
         expect(response.statusCode).toBe(200);
         // Asegúrate de que las fechas se comparen correctamente o se normalicen
-        // Puedes mapear el body para convertir las fechas a objetos Date antes de comparar
         const receivedBody = response.body.map(task => ({
             ...task,
             fecha_creacion: new Date(task.fecha_creacion)
         }));
-        expect(receivedBody).toEqual(mockTasks); // Ahora debería funcionar con los datos mockeados
+        expect(receivedBody).toEqual(mockTasks);
     });
 
     it('POST /api/tareas - debe crear una nueva tarea', async () => {
@@ -104,39 +127,39 @@ describe('API de Tareas', () => {
         expect(response.statusCode).toBe(201);
         expect(response.body).toHaveProperty('id');
         expect(response.body.descripcion).toBe(nuevaTarea.descripcion);
-        expect(response.body.completada).toBe(0); // Asumiendo 0 para falso
-        // Opcional: Verifica si la llamada al mock fue correcta
-        const dbMock = getDbPool();
-        expect(dbMock.query).toHaveBeenCalledWith(
-            expect.stringContaining('INSERT INTO tareas (descripcion, completada, fecha_creacion) VALUES (?, ?, NOW())'),
-            [nuevaTarea.descripcion, 0]
+        expect(response.body.completada).toBe(0); 
+
+        // Verifica que executeQuery fue llamado con los parámetros correctos
+        expect(executeQuery).toHaveBeenCalledWith(
+            expect.stringContaining('INSERT INTO tareas (descripcion) VALUES (?)'), // Solo verifica la descripción ya que fecha_creacion es gestionada por la DB
+            [nuevaTarea.descripcion]
         );
     });
 
     it('PUT /api/tareas/:id - debe actualizar una tarea existente', async () => {
-        const tareaIdActualizar = 1; // Asumiendo que ID 1 existe en tu mockTasks
+        const tareaIdActualizar = 1;
         const datosActualizacion = { completada: true };
         const response = await request(app)
             .put(`/api/tareas/${tareaIdActualizar}`)
             .send(datosActualizacion);
         expect(response.statusCode).toBe(200);
         expect(response.body.message).toBe('Tarea actualizada correctamente');
-        // Opcional: Verifica si la llamada al mock fue correcta
-        const dbMock = getDbPool();
-        expect(dbMock.query).toHaveBeenCalledWith(
+
+        // Verifica que executeQuery fue llamado con los parámetros correctos
+        expect(executeQuery).toHaveBeenCalledWith(
             expect.stringContaining('UPDATE tareas SET completada = ? WHERE id = ?'),
-            [1, tareaIdActualizar] // `true` se convierte a `1` en MySQL
+            [1, tareaIdActualizar] 
         );
     });
 
     it('DELETE /api/tareas/:id - debe eliminar una tarea existente', async () => {
-        const tareaIdEliminar = 1; // Asumiendo que ID 1 existe en tu mockTasks
+        const tareaIdEliminar = 1;
         const response = await request(app).delete(`/api/tareas/${tareaIdEliminar}`);
         expect(response.statusCode).toBe(200);
         expect(response.body.message).toBe('Tarea eliminada correctamente');
-        // Opcional: Verifica si la llamada al mock fue correcta
-        const dbMock = getDbPool();
-        expect(dbMock.query).toHaveBeenCalledWith(
+
+        // Verifica que executeQuery fue llamado con los parámetros correctos
+        expect(executeQuery).toHaveBeenCalledWith(
             expect.stringContaining('DELETE FROM tareas WHERE id = ?'),
             [tareaIdEliminar]
         );
