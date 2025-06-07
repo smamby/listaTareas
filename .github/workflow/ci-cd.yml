@@ -1,0 +1,129 @@
+name: CI/CD Pipeline
+
+# Eventos que disparan el workflow
+on:
+  push:
+    branches:
+      - main # Dispara el workflow en cada push a la rama 'main'
+  pull_request:
+    branches:
+      - main # Dispara el workflow en cada Pull Request a la rama 'main'
+
+jobs:
+  # Job para construir la aplicación y correr los tests (unitarios y de integración)
+  build_and_test:
+    runs-on: ubuntu-latest # Ejecuta el job en un runner de Ubuntu
+
+    # Define servicios que deben estar disponibles para este job
+    services:
+      # Servicio MySQL para los tests de integración
+      mysql_test_db: # Nombre del servicio (puedes usar el que quieras, lo usarás para el host)
+        image: mysql:8.0 # Imagen de MySQL. Asegúrate de que la versión coincida con la que usas.
+        env:
+          # Variables de entorno para la DB de tests en GitHub Actions
+          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD_TEST }} # Contraseña para el usuario root
+          MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE_TEST }} # Nombre de la base de datos para tests
+        ports:
+          - 3306:3306 # Mapea el puerto 3306 del contenedor al host del runner
+        options: >- # Opciones de salud para esperar a que la DB esté lista
+          --health-cmd "mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout code # Paso para clonar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js # Configura el entorno Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20' # Versión de Node.js a usar. Asegúrate de que coincida con tu proyecto.
+
+      - name: Install dependencies # Instala las dependencias del proyecto
+        run: npm ci # 'npm ci' es preferido en CI/CD por su determinismo (usa package-lock.json)
+
+      - name: Run unit tests # Ejecuta los tests unitarios
+        run: npm test
+        # Los tests unitarios no requieren la DB real, así que no necesitan configuración de env extra.
+
+      - name: Wait for MySQL to be ready # Espera a que el servicio MySQL esté completamente listo
+        # Esto es crucial para los tests de integración que dependen de la DB.
+        # Usa 'nc -z' para verificar la conexión al puerto 3306 del host (que es nuestro servicio MySQL mapeado).
+        run: |
+          while ! nc -z localhost 3306; do
+            echo "Waiting for MySQL connection..."
+            sleep 5
+          done
+          echo "MySQL is up and running!"
+
+      - name: Run database migrations for tests (if applicable) # Opcional: Ejecuta migraciones para la DB de tests
+        # Si tu base de datos de tests necesita un esquema específico o datos iniciales,
+        # este es el lugar para ejecutar tus scripts de migración o seeding.
+        # Por ejemplo, si tienes un script 'npm run migrate:test' o 'npm run seed:test'.
+        # Si tus tests de integración manejan la creación/limpieza de tablas por sí mismos,
+        # este paso puede ser omitido o ser un simple 'echo'.
+        run: |
+          echo "Skipping test DB migrations. If you have any, add your command here."
+          # Ejemplo: npm run migrate:test
+          # Ejemplo: mysql -h 127.0.0.1 -u root -p${{ secrets.MYSQL_ROOT_PASSWORD_TEST }} ${{ secrets.MYSQL_DATABASE_TEST }} < path/to/schema.sql
+
+      - name: Run integration tests # Ejecuta los tests de integración
+        env:
+          # Estas variables de entorno son para tu aplicación *durante los tests de integración*.
+          # La app se conectará al servicio 'mysql_test_db' a través de 'localhost' (por el mapeo de puertos).
+          DB_HOST: 127.0.0.1
+          DB_USER: root # O el usuario configurado para la DB de tests
+          DB_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD_TEST }}
+          DB_DATABASE: ${{ secrets.MYSQL_DATABASE_TEST }}
+          DB_PORT: 3306 # Asegúrate de que tu app pueda leer un PORT si lo necesitas
+        run: npm run test:integration
+
+  # Job para construir y subir la imagen Docker a Docker Hub
+  docker_build_and_push:
+    needs: build_and_test # Este job solo se ejecutará si el job 'build_and_test' fue exitoso
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub # Inicia sesión en Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }} # Tu nombre de usuario de Docker Hub
+          password: ${{ secrets.DOCKER_TOKEN }} # Tu token de acceso personal de Docker Hub (usar secrets)
+
+      - name: Build and push Docker image # Construye la imagen Docker y la sube
+        uses: docker/build-push-action@v5
+        with:
+          context: . # El contexto de construcción es el directorio raíz del repositorio
+          push: true # Habilita el push a Docker Hub
+          tags: ${{ secrets.DOCKER_USERNAME }}/lista-tareas-app:latest # Etiqueta de la imagen (ej: tuusuario/lista-tareas-app:latest)
+          # cache-from: type=gha,scope=build-cache # Opcional: Cachear capas Docker para builds más rápidos
+          # cache-to: type=gha,scope=build-cache,mode=max
+
+  # Job para el despliegue automático en Render
+  deploy_to_render:
+    needs: docker_build_and_push # Este job solo se ejecutará si la imagen Docker se construyó y subió exitosamente
+    runs-on: ubuntu-latest
+    environment: production # Puedes definir un entorno para este paso en GitHub (opcional)
+
+    steps:
+      - name: Trigger Render Deploy # Dispara un despliegue en Render
+        # Render generalmente se configura para desplegar automáticamente en un push a 'main'.
+        # Si tienes esa configuración en Render, este paso es solo informativo o puedes omitirlo.
+        # Si quieres forzar un despliegue o tienes un flujo más complejo, puedes usar la Render CLI.
+        # Para el despliegue automático de Render por push, este paso es un placeholder.
+        run: |
+          echo "Render está configurado para auto-desplegarse en la rama 'main'."
+          echo "Verifica el estado del despliegue en tu panel de Render."
+          # Si necesitas una acción más explícita (ej. si Render no auto-despliega solo por push):
+          # - name: Deploy to Render via Render CLI
+          #   uses: akhileshns/heroku-deploy@v3.12.12 # Este es para Heroku, Render no tiene una action oficial tan directa
+          #   with:
+          #     heroku_api_key: ${{secrets.RENDER_API_KEY}} # Necesitarías un Render API Key
+          #     heroku_app_name: "your-render-app-name" # Tu nombre de app en Render
+          #     heroku_email: "your-render-email" # Tu email de Render
+          #     # Tendrías que investigar si Render ofrece una acción de GH oficial o una CLI para esto.
+          #     # La forma más común es que Render haga el pull de tu repo en cada push.
