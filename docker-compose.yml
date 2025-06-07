@@ -56,7 +56,7 @@ services:
         condition: service_healthy
     networks:
       - app_network
-    command: ["npm", "run", "test:integration"]
+    command: sh -c "npm test -- --testPathPattern=__tests__/tareas.test.js && npm test -- --testPathPattern=__tests__/integration/tareas.integration.test.js"
     restart: "no"
 
 volumes:
