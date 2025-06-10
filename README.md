@@ -19,23 +19,23 @@ ejecutar script de bash
 #### Clone el proyecto
 git clone https://github.com/smamby/listaTareas.git
 #### requiere tener el archivo .env en /
-#### ejecute el script deploy-dev-test.sh
-./deploy-dev-test.sh
+#### ejecute el script deploy-dev-test.sh  
+./deploy-dev-test.sh  
 
 
 ## OPCION 3: Despliegue local manual
-git clone https://github.com/smamby/listaTareas.git
-npm install
-npm run dev
-npm run test
-npm run test:integration
+git clone https://github.com/smamby/listaTareas.git  
+npm install  
+npm run dev  
+npm run test  
+npm run test:integration  
 
 
 ## OPCION 4: Despliegue con docker compose
 ### git clone https://github.com/smamby/listaTareas.git
-### copy .env al / del proyecto
-docker-compose up -d --build
-winpty docker exec -it listatareas-app-1 bash
-npm run test
-npm run test:integration
+### copy .env al / del proyecto  
+docker-compose up -d --build  
+winpty docker exec -it listatareas-app-1 bash  
+npm run test  
+npm run test:integration  
 
