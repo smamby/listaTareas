@@ -32,8 +32,8 @@ npm run test:integration
 
 
 ## OPCION 4: Despliegue con docker compose
-### git clone https://github.com/smamby/listaTareas.git
-### copy .env al / del proyecto  
+#### git clone https://github.com/smamby/listaTareas.git
+#### copy .env al / del proyecto  
 docker-compose up -d --build  
 winpty docker exec -it listatareas-app-1 bash  
 npm run test  
