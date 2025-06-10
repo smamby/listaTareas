@@ -1,4 +1,9 @@
 -- Este script se ejecuta cuando el contenedor MySQL se inicia por primera vez.
+show databases;
+
+# solo uso de despliegue automatico ci-cd
+# create database listatareas;
+# use listatareas;  
 
 create database if not exists lista_tareas_db;
 

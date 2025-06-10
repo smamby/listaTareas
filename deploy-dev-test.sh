@@ -12,10 +12,15 @@ trap cleanup_and_exit SIGINT
 # Bucle principal del menú
 while true; do
     clear
+    echo "Antes de comenzar, asegúrate de tener Docker y Docker Compose instalados."
+    echo "haber clonado el repositorio y estar en la carpeta raíz del proyecto."
+    echo "Haber copiado el archivo .env."
+    echo "---------------------------------------------"
     echo "--- Menú de Operaciones con la Aplicación ---"
     echo "1) Probar la aplicación (Levantar app + MySQL y abrir en el navegador)"
     echo "2) Correr tests unitarios"
     echo "3) Correr tests de integración"
+    echo "q) Salir del menú"
     echo "---------------------------------------------"
     echo "Presiona el número de tu elección o 'q' para salir."
     echo -n "Tu elección: "
